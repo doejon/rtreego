@@ -307,6 +307,11 @@ func (p Point) ToRect(tol float64) *Rect {
 	return &Rect{a, b}
 }
 
+// Bounds gets the bounds for a point with a default tol of 0.01
+func (p Point) Bounds() *Rect {
+	return p.ToRect(0.01)
+}
+
 // boundingBox constructs the smallest rectangle containing both r1 and r2.
 func boundingBox(r1, r2 *Rect) (bb *Rect) {
 	bb = new(Rect)

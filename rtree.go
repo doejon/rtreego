@@ -40,7 +40,7 @@ func NewTree(dim, min, max int, objs ...Spatial) *Rtree {
 		MaxChildren: max,
 		height:      1,
 		root: &node{
-			entries: []entry{},
+			entries: []*entry{},
 			leaf:    true,
 			level:   1,
 		},
@@ -63,7 +63,7 @@ func (tree *Rtree) Size() int {
 }
 
 func (tree *Rtree) String() string {
-	return "foo"
+	return tree.root.String()
 }
 
 // Depth returns the maximum depth of tree.
@@ -73,7 +73,7 @@ func (tree *Rtree) Depth() int {
 
 type dimSorter struct {
 	dim  int
-	objs []entry
+	objs []*entry
 }
 
 func (s *dimSorter) Len() int {
@@ -90,7 +90,7 @@ func (s *dimSorter) Less(i, j int) bool {
 
 // walkPartitions splits objs into slices of maximum k elements and
 // iterates over these partitions.
-func walkPartitions(k int, objs []entry, iter func(parts []entry)) {
+func walkPartitions(k int, objs []*entry, iter func(parts []*entry)) {
 	n := (len(objs) + k - 1) / k // ceil(len(objs) / k)
 
 	for i := 1; i < n; i++ {
@@ -99,7 +99,7 @@ func walkPartitions(k int, objs []entry, iter func(parts []entry)) {
 	iter(objs[(n-1)*k:])
 }
 
-func sortByDim(dim int, objs []entry) {
+func sortByDim(dim int, objs []*entry) {
 	sort.Sort(&dimSorter{dim, objs})
 }
 
@@ -109,9 +109,9 @@ func (tree *Rtree) bulkLoad(objs []Spatial) {
 	n := len(objs)
 
 	// create entries for all the objects
-	entries := make([]entry, n)
+	entries := make([]*entry, n)
 	for i := range objs {
-		entries[i] = entry{
+		entries[i] = &entry{
 			bb:  objs[i].Bounds(),
 			obj: objs[i],
 		}
@@ -146,7 +146,7 @@ func (tree *Rtree) bulkLoad(objs []Spatial) {
 
 // omt is the recursive part of the Overlap Minimizing Top-loading bulk-
 // load approach. Returns the root node of a subtree.
-func (tree *Rtree) omt(level, nSlices int, objs []entry, m int) *node {
+func (tree *Rtree) omt(level, nSlices int, objs []*entry, m int) *node {
 	// if number of objects is less than or equal than max children per leaf,
 	// we need to create a leaf node
 	if len(objs) <= m {
@@ -155,7 +155,7 @@ func (tree *Rtree) omt(level, nSlices int, objs []entry, m int) *node {
 			child := tree.omt(level-1, nSlices, objs, m)
 			n := &node{
 				level: level,
-				entries: []entry{{
+				entries: []*entry{&entry{
 					bb:    child.computeBoundingBox(),
 					child: child,
 				}},
@@ -172,7 +172,7 @@ func (tree *Rtree) omt(level, nSlices int, objs []entry, m int) *node {
 
 	n := &node{
 		level:   level,
-		entries: make([]entry, 0, m),
+		entries: make([]*entry, 0, m),
 	}
 
 	// maximum node size given at most M nodes at this level
@@ -186,16 +186,16 @@ func (tree *Rtree) omt(level, nSlices int, objs []entry, m int) *node {
 	}
 
 	// create sub trees
-	walkPartitions(vertSize, objs, func(vert []entry) {
+	walkPartitions(vertSize, objs, func(vert []*entry) {
 		// sort vertical slice by a different dimension on every level
 		sortByDim((tree.height-level+1)%tree.Dim, vert)
 
 		// split slice into groups of size k
-		walkPartitions(k, vert, func(part []entry) {
+		walkPartitions(k, vert, func(part []*entry) {
 			child := tree.omt(level-1, 1, part, tree.MaxChildren)
 			child.parent = n
 
-			n.entries = append(n.entries, entry{
+			n.entries = append(n.entries, &entry{
 				bb:    child.computeBoundingBox(),
 				child: child,
 			})
@@ -208,7 +208,7 @@ func (tree *Rtree) omt(level, nSlices int, objs []entry, m int) *node {
 type node struct {
 	parent  *node
 	leaf    bool
-	entries []entry
+	entries []*entry
 	level   int // node depth in the Rtree
 }
 
@@ -243,13 +243,13 @@ type Spatial interface {
 // Implemented per Section 3.2 of "R-trees: A Dynamic Index Structure for
 // Spatial Searching" by A. Guttman, Proceedings of ACM SIGMOD, p. 47-57, 1984.
 func (tree *Rtree) Insert(obj Spatial) {
-	e := entry{obj.Bounds(), nil, obj}
+	e := &entry{obj.Bounds(), nil, obj}
 	tree.insert(e, 1)
 	tree.size++
 }
 
 // insert adds the specified entry to the tree at the specified level.
-func (tree *Rtree) insert(e entry, level int) {
+func (tree *Rtree) insert(e *entry, level int) {
 	leaf := tree.chooseNode(tree.root, e, level)
 	leaf.entries = append(leaf.entries, e)
 
@@ -270,9 +270,9 @@ func (tree *Rtree) insert(e entry, level int) {
 		tree.root = &node{
 			parent: nil,
 			level:  tree.height,
-			entries: []entry{
-				entry{bb: oldRoot.computeBoundingBox(), child: oldRoot},
-				entry{bb: splitRoot.computeBoundingBox(), child: splitRoot},
+			entries: []*entry{
+				&entry{bb: oldRoot.computeBoundingBox(), child: oldRoot},
+				&entry{bb: splitRoot.computeBoundingBox(), child: splitRoot},
 			},
 		}
 		oldRoot.parent = tree.root
@@ -281,14 +281,14 @@ func (tree *Rtree) insert(e entry, level int) {
 }
 
 // chooseNode finds the node at the specified level to which e should be added.
-func (tree *Rtree) chooseNode(n *node, e entry, level int) *node {
+func (tree *Rtree) chooseNode(n *node, e *entry, level int) *node {
 	if n.leaf || n.level == level {
 		return n
 	}
 
 	// find the entry whose bb needs least enlargement to include obj
 	diff := math.MaxFloat64
-	var chosen entry
+	var chosen *entry
 	for _, en := range n.entries {
 		bb := boundingBox(en.bb, e.bb)
 		d := bb.size() - en.bb.size()
@@ -319,7 +319,7 @@ func (tree *Rtree) adjustTree(n, nn *node) (*node, *node) {
 
 	// Otherwise, these are two nodes resulting from a split.
 	// n was reused as the "left" node, but we need to add nn to n.parent.
-	enn := entry{nn.computeBoundingBox(), nn, nil}
+	enn := &entry{nn.computeBoundingBox(), nn, nil}
 	n.parent.entries = append(n.parent.entries, enn)
 
 	// If the new entry overflows the parent, split the parent and propagate.
@@ -336,7 +336,7 @@ func (n *node) getEntry() *entry {
 	var e *entry
 	for i := range n.parent.entries {
 		if n.parent.entries[i].child == n {
-			e = &n.parent.entries[i]
+			e = n.parent.entries[i]
 			break
 		}
 	}
@@ -366,12 +366,12 @@ func (n *node) split(minGroupSize int) (left, right *node) {
 
 	// setup the new split nodes, but re-use n as the left node
 	left = n
-	left.entries = []entry{leftSeed}
+	left.entries = []*entry{leftSeed}
 	right = &node{
 		parent:  n.parent,
 		leaf:    n.leaf,
 		level:   n.level,
-		entries: []entry{rightSeed},
+		entries: []*entry{rightSeed},
 	}
 
 	// TODO
@@ -417,7 +417,7 @@ func (n *node) getAllBoundingBoxes() []*Rect {
 	return rects
 }
 
-func assign(e entry, group *node) {
+func assign(e *entry, group *node) {
 	if e.child != nil {
 		e.child.parent = group
 	}
@@ -425,7 +425,7 @@ func assign(e entry, group *node) {
 }
 
 // assignGroup chooses one of two groups to which a node should be added.
-func assignGroup(e entry, left, right *node) {
+func assignGroup(e *entry, left, right *node) {
 	leftBB := left.computeBoundingBox()
 	rightBB := right.computeBoundingBox()
 	leftEnlarged := boundingBox(leftBB, e.bb)
@@ -476,7 +476,7 @@ func (n *node) pickSeeds() (int, int) {
 }
 
 // pickNext chooses an entry to be added to an entry group.
-func pickNext(left, right *node, entries []entry) (next int) {
+func pickNext(left, right *node, entries []*entry) (next int) {
 	maxDiff := -1.0
 	leftBB := left.computeBoundingBox()
 	rightBB := right.computeBoundingBox()
@@ -568,7 +568,7 @@ func (tree *Rtree) condenseTree(n *node) {
 	for n != tree.root {
 		if len(n.entries) < tree.MinChildren {
 			// remove n from parent entries
-			entries := []entry{}
+			entries := []*entry{}
 			for _, e := range n.parent.entries {
 				if e.child != n {
 					entries = append(entries, e)
@@ -592,7 +592,7 @@ func (tree *Rtree) condenseTree(n *node) {
 
 	for _, n := range deleted {
 		// reinsert entry so that it will remain at the same level as before
-		e := entry{n.computeBoundingBox(), n, nil}
+		e := &entry{n.computeBoundingBox(), n, nil}
 		tree.insert(e, n.level+1)
 	}
 }
@@ -664,7 +664,7 @@ func (tree *Rtree) GetAllBoundingBoxes() []*Rect {
 // utilities for sorting slices of entries
 
 type entrySlice struct {
-	entries []entry
+	entries []*entry
 	dists   []float64
 }
 
@@ -679,13 +679,13 @@ func (s entrySlice) Less(i, j int) bool {
 	return s.dists[i] < s.dists[j]
 }
 
-func sortEntries(p Point, entries []entry) ([]entry, []float64) {
-	sorted := make([]entry, len(entries))
+func sortEntries(p Point, entries []*entry) ([]*entry, []float64) {
+	sorted := make([]*entry, len(entries))
 	dists := make([]float64, len(entries))
 	return sortPreallocEntries(p, entries, sorted, dists)
 }
 
-func sortPreallocEntries(p Point, entries, sorted []entry, dists []float64) ([]entry, []float64) {
+func sortPreallocEntries(p Point, entries, sorted []*entry, dists []float64) ([]*entry, []float64) {
 	// use preallocated slices
 	sorted = sorted[:len(entries)]
 	dists = dists[:len(entries)]
@@ -698,7 +698,7 @@ func sortPreallocEntries(p Point, entries, sorted []entry, dists []float64) ([]e
 	return sorted, dists
 }
 
-func pruneEntries(p Point, entries []entry, minDists []float64) []entry {
+func pruneEntries(p Point, entries []*entry, minDists []float64) []*entry {
 	minMinMaxDist := math.MaxFloat64
 	for i := range entries {
 		minMaxDist := p.minMaxDist(entries[i].bb)
@@ -707,7 +707,7 @@ func pruneEntries(p Point, entries []entry, minDists []float64) []entry {
 		}
 	}
 	// remove all entries with minDist > minMinMaxDist
-	pruned := []entry{}
+	pruned := []*entry{}
 	for i := range entries {
 		if minDists[i] <= minMinMaxDist {
 			pruned = append(pruned, entries[i])
@@ -716,7 +716,7 @@ func pruneEntries(p Point, entries []entry, minDists []float64) []entry {
 	return pruned
 }
 
-func pruneEntriesMinDist(d float64, entries []entry, minDists []float64) []entry {
+func pruneEntriesMinDist(d float64, entries []*entry, minDists []float64) []*entry {
 	var i int
 	for ; i < len(entries); i++ {
 		if minDists[i] > d {
@@ -755,7 +755,7 @@ func (tree *Rtree) NearestNeighbors(k int, p Point, filters ...Filter) []Spatial
 	// preallocate the buffers for sortings the branches. At each level of the
 	// tree, we slide the buffer by the number of entries in the node.
 	maxBufSize := tree.MaxChildren * tree.Depth()
-	branches := make([]entry, maxBufSize)
+	branches := make([]*entry, maxBufSize)
 	branchDists := make([]float64, maxBufSize)
 
 	// allocate the buffers for the results
@@ -799,7 +799,7 @@ func insertNearest(k int, dists []float64, nearest []Spatial, dist float64, obj 
 	return dists, nearest, false
 }
 
-func (tree *Rtree) nearestNeighbors(k int, p Point, n *node, dists []float64, nearest []Spatial, filters []Filter, b []entry, bd []float64) ([]Spatial, []float64, bool) {
+func (tree *Rtree) nearestNeighbors(k int, p Point, n *node, dists []float64, nearest []Spatial, filters []Filter, b []*entry, bd []float64) ([]Spatial, []float64, bool) {
 	var abort bool
 	if n.leaf {
 		for _, e := range n.entries {
