@@ -248,10 +248,6 @@ func (tree *Rtree) omt(level, nSlices int, objs []*entry, m int) *node {
 	return n
 }
 
-type storable interface {
-	flush() error // flush whole
-}
-
 // node represents a tree node of an Rtree.
 type node struct {
 	parent  *node
