@@ -7,8 +7,17 @@ package rtreego
 
 import (
 	"fmt"
+	"image"
+	"image/png"
 	"math"
+	"os"
 	"sort"
+	"strings"
+)
+
+const (
+	_MaxImgSize = 4000
+	_Border     = 10 // Add a border to image
 )
 
 // Comparator compares two spatials and returns whether they are equal.
@@ -69,6 +78,41 @@ func (tree *Rtree) String() string {
 // Depth returns the maximum depth of tree.
 func (tree *Rtree) Depth() int {
 	return tree.height
+}
+
+// Draw the tree as a text representation (indented)
+func (tree *Rtree) Draw() string {
+	return tree.root.draw(0)
+}
+
+// DrawImg draws an image of current nodes
+func (tree *Rtree) DrawImg() {
+	// get image size (max.bounding box)
+	bb := tree.root.computeBoundingBox()
+	xMin := bb.p[0]
+	yMin := bb.p[1]
+	xMax := bb.q[0]
+	yMax := bb.q[1]
+	x := xMax - xMin
+	y := yMax - yMin
+	var fact float64
+	if x > y {
+		fact = _MaxImgSize / x
+	} else {
+		fact = _MaxImgSize / y
+	}
+	// create a new image
+	i := NewImgRGBA(image.Rect(
+		int(math.Ceil(xMin*fact-_Border)),
+		int(math.Ceil(yMin*fact-_Border)),
+		int(math.Ceil(xMax*fact+_Border)),
+		int(math.Ceil(yMax*fact+_Border))),
+		fact)
+	i.PutNode(tree.root)
+
+	f, _ := os.OpenFile("out.png", os.O_WRONLY|os.O_CREATE, 0600)
+	defer f.Close()
+	png.Encode(f, i)
 }
 
 type dimSorter struct {
@@ -204,6 +248,10 @@ func (tree *Rtree) omt(level, nSlices int, objs []*entry, m int) *node {
 	return n
 }
 
+type storable interface {
+	flush() error // flush whole
+}
+
 // node represents a tree node of an Rtree.
 type node struct {
 	parent  *node
@@ -216,6 +264,16 @@ func (n *node) String() string {
 	return fmt.Sprintf("node{leaf: %v, entries: %v}", n.leaf, n.entries)
 }
 
+// Draw node as a tree
+func (n *node) draw(level int) string {
+	tabs := strings.Repeat(" ", level*2)
+	x := fmt.Sprintf("\n%sN[l: %v | entries: %d]\n", tabs, n.leaf, len(n.entries))
+	for _, v := range n.entries {
+		x += fmt.Sprintf("%s", v.draw(level))
+	}
+	return x
+}
+
 // entry represents a spatial index record stored in a tree node.
 type entry struct {
 	bb    *Rect // bounding-box of all children of this entry
@@ -223,11 +281,20 @@ type entry struct {
 	obj   Spatial
 }
 
-func (e entry) String() string {
+func (e *entry) String() string {
 	if e.child != nil {
 		return fmt.Sprintf("entry{bb: %v, child: %v}", e.bb, e.child)
 	}
 	return fmt.Sprintf("entry{bb: %v, obj: %v}", e.bb, e.obj)
+}
+
+func (e *entry) draw(level int) string {
+	tabs := strings.Repeat(" ", level*2+2)
+	x := fmt.Sprintf("%sE[%s]\n", tabs, e.bb.String())
+	if e.child != nil {
+		x += e.child.draw(level + 1)
+	}
+	return x
 }
 
 // Spatial is an interface for objects that can be stored in an Rtree and queried.
